@@ -43,8 +43,8 @@ The library does not enforce any special type for key modelling, anything castab
 
 ```go
 type Article struct {
-	Author   dynamo.IRI `dynamodbav:"prefix,omitempty"`
-	ID       dynamo.IRI `dynamodbav:"suffix,omitempty"`
+	Author   dynamo.IRI `dynamodbav:"prefix,omitempty"` => prefix == partion key? (why omitempty?)
+	ID       dynamo.IRI `dynamodbav:"suffix,omitempty"` => suffix == sort key?
   // ...
 }
 
@@ -78,7 +78,7 @@ dynamo.NewIRI("keyword:haskell")
 The data type `dynamo.IRI` (`curie.IRI`) makes formal rules of building keys from multiple segments. The application has a common interface to construct keys of any complexity to resolve data sharding aspects. 
 
 ```go
-dynamo.NewIRI("author:smith/%d", 1)
+dynamo.NewIRI("author:smith/%d", 1) => wouldn't it be better using random uuid?
 dynamo.NewIRI("author:smith/%d", 2)
 ```
 
@@ -162,13 +162,15 @@ SortKey is
   ⟿ keyword:theory
 */
 type Keyword struct {
-	HashKey dynamo.IRI `dynamodbav:"prefix,omitempty"`
+	HashKey dynamo.IRI `dynamodbav:"prefix,omitempty"` => PartitionKey?
 	SortKey dynamo.IRI `dynamodbav:"suffix,omitempty"`
 }
 ```
 
 There are only a few limited ways to query data efficiently from DynamoDB. The composite sort key together with `dynamo.IRI` (`curie.IRI`) data type let application retrieve hierarchy of related items using range queries with expressions `begins_with`, `between`, `>`, `<`, etc. The `dynamo` library automates construction of these expressions.
 
+=> what would be the impact on write in this case?
+==> I guess an article could have multiple keywords and so when inserting / updating the article, those keywords would need to be refreshed?
 
 ## Secondary indexes
 
@@ -178,7 +180,14 @@ Composite sort key supports hierarchical one-to-many relations. Additional ortho
 * As a reader I want to list all articles written by the author ...
 * As a reader I want to look up all articles for a given category in chronological order ...
 
-The first access pattern is addressed by composite sort key `author ⟼ article`, the second one requires another `category ⟼ year` key. One approach is an explicit projection of data but secondary indexes are easy. DynamoDB implicitly copies data from the main table into the secondary index using another pair of attributes to establish identity. Therefore a new access dimension is unlocked. Eventual consistency is only the aspect to consider while using indexes. The local secondary indexes provide strong consistency but general advice to favour global indexes.
+The first access pattern is addressed by composite sort key `author ⟼ article`,
+=> this is a bit disturbing to me ^^' isn't composite partition key?, is it the same? 
+=> do I understand correctly that a sort key cannot be accessed directly without partiton key?
+
+the second one requires another `category ⟼ year` key. One approach is an explicit projection of data but secondary indexes are easy. 
+=> `but secondary indexes are easy` ?
+DynamoDB implicitly copies data from the main table into the secondary index using another pair of attributes to establish identity. Therefore a new access dimension is unlocked. Eventual consistency is only the aspect to consider while using indexes. The local secondary indexes provide strong consistency but general advice to favour global indexes.
+=> Do I understand that actually local secondary index would be problematic for this use case as the partition key remains the same with the main table? 
 
 The `dynamo` library supports both global and local secondary indexes with particular behavior:
 * it creates a client instance per table, therefore each index requires own instance of the client;
@@ -260,6 +269,10 @@ inverse := Keyword{HashKey: article, SortKey: keyword, /* ... */}
 db.Put(forward)
 db.Put(inverse)
 ```
+=> would `forward` and `inverse` have both the content of the article or only one?
+==> if only one, how the access pattern would look like? would it be a 2 reads? eg:
+1. read inverse, get `forward` partition key
+2. read forward get article content
 
 **As a reader I want to fetch the article ...**
 
